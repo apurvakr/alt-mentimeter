@@ -23,9 +23,10 @@ await app.prepare();
 const httpServer = createServer((req, res) => handle(req, res));
 const io = new Server(httpServer);
 
-// Where participants join: an explicit PUBLIC_URL, Railway's generated domain, or this machine on the LAN.
+// Where participants join: an explicit PUBLIC_URL, the host's own public URL, or this machine on the LAN.
 const publicUrl = (
   process.env.PUBLIC_URL ??
+  process.env.RENDER_EXTERNAL_URL ??
   (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://${lanAddress() ?? "localhost"}:${port}`)
 ).replace(/\/+$/, "");
 const joinHost = publicUrl.replace(/^https?:\/\//, "");

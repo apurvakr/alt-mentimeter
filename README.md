@@ -13,6 +13,16 @@ Open http://localhost:3000, create a presentation, add slides, then click **Pres
 
 For production: `npm run build`, then `npm start`.
 
+## Deploy (Render)
+
+Create a **Web Service** from this repository with:
+
+- Build command: `npm ci --include=dev && npm run build`
+- Start command: `npm start`
+- A persistent disk mounted at `/var/data`, plus the environment variable `DATA_DIR=/var/data`
+
+The join link uses Render's public URL automatically. Set `PUBLIC_URL` to override it, for example with a custom domain.
+
 ## Presenter shortcuts
 
 - `→` / `Space` / `PageDown`: next slide
