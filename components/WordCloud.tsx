@@ -2,14 +2,22 @@
 
 import cloud from "d3-cloud";
 import { useEffect, useRef, useState } from "react";
+import { OPTION_COLORS } from "@/lib/palette";
 
 interface Placed extends cloud.Word {
   text: string;
   size: number;
 }
 
-const COLORS = ["#4f46e5", "#0891b2", "#db2777", "#ea580c", "#16a34a", "#7c3aed"];
-const FONT = 'ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif';
+// Option colours minus the neutral grey; they all read well on the dark presenter screen.
+const COLORS = OPTION_COLORS.slice(0, 7);
+const FALLBACK_FONT = "ui-sans-serif, system-ui, sans-serif";
+
+/** The layout measures text on a canvas, which can't resolve CSS variables, so look the font up. */
+function headingFont() {
+  const family = getComputedStyle(document.documentElement).getPropertyValue("--font-heading").trim();
+  return family ? `${family}, ${FALLBACK_FONT}` : FALLBACK_FONT;
+}
 
 function hash(text: string) {
   let h = 0;
@@ -31,6 +39,11 @@ export function WordCloud({ words }: { words: { text: string; count: number }[] 
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [placed, setPlaced] = useState<Placed[]>([]);
+  const [font, setFont] = useState(FALLBACK_FONT);
+
+  useEffect(() => {
+    setFont(headingFont());
+  }, []);
 
   useEffect(() => {
     const el = ref.current;
@@ -58,8 +71,8 @@ export function WordCloud({ words }: { words: { text: string; count: number }[] 
       .words(words.map((w) => ({ text: w.text, size: fontSize(w.count) })))
       .padding(4)
       .rotate((d) => (hash(d.text) % 5 === 0 ? 90 : 0))
-      .font(FONT)
-      .fontWeight(700)
+      .font(font)
+      .fontWeight(800)
       .fontSize((d) => d.size)
       .random(seeded(7))
       .on("end", (out) => setPlaced(out));
@@ -69,12 +82,12 @@ export function WordCloud({ words }: { words: { text: string; count: number }[] 
     };
     // `key` captures every change to `words`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, size.w, size.h]);
+  }, [key, size.w, size.h, font]);
 
   return (
     <div ref={ref} className="h-full w-full">
       {words.length === 0 ? (
-        <div className="flex h-full items-center justify-center text-xl text-slate-400">Waiting for answers…</div>
+        <div className="flex h-full items-center justify-center text-2xl text-haze">No answers yet</div>
       ) : (
         <svg width={size.w} height={size.h} role="img" aria-label={`Word cloud: ${words.map((w) => w.text).join(", ")}`}>
           <g transform={`translate(${size.w / 2},${size.h / 2})`}>
@@ -83,7 +96,7 @@ export function WordCloud({ words }: { words: { text: string; count: number }[] 
                 key={w.text}
                 textAnchor="middle"
                 transform={`translate(${w.x},${w.y}) rotate(${w.rotate})`}
-                style={{ fontSize: w.size, fontFamily: FONT, fontWeight: 700, transition: "transform 400ms ease" }}
+                style={{ fontSize: w.size, fontFamily: font, fontWeight: 800, transition: "transform 400ms ease" }}
                 fill={COLORS[hash(w.text) % COLORS.length]}
               >
                 {w.text}

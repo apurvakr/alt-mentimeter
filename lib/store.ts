@@ -1,7 +1,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { db, transaction } from "./db";
 import { uid } from "./slides";
-import type { LeaderboardEntry, Presentation, Slide, SlideType } from "./types";
+import type { LeaderboardEntry, Pacing, Presentation, SessionStatus, Slide, SlideType } from "./types";
 
 interface PresentationRow {
   id: string;
@@ -9,6 +9,9 @@ interface PresentationRow {
   code: string;
   token: string;
   current_index: number;
+  pacing: Pacing;
+  status: SessionStatus;
+  show_results: number;
 }
 
 interface SlideRow {
@@ -42,7 +45,18 @@ function load(row: PresentationRow | undefined): StoredPresentation | null {
     if (r.quiz_started_at != null) quizStartedAt[r.id] = r.quiz_started_at;
     return { id: r.id, type: r.type, question: r.question, options: JSON.parse(r.options), settings: JSON.parse(r.settings) };
   });
-  return { id: row.id, title: row.title, code: row.code, currentIndex: row.current_index, slides, token: row.token, quizStartedAt };
+  return {
+    id: row.id,
+    title: row.title,
+    code: row.code,
+    currentIndex: row.current_index,
+    slides,
+    pacing: row.pacing,
+    status: row.status,
+    showResults: row.show_results === 1,
+    token: row.token,
+    quizStartedAt,
+  };
 }
 
 export function getPresentation(id: string) {
@@ -59,7 +73,7 @@ function insertSlide(presentationId: string, position: number, slide: Slide) {
   ).run(slide.id, presentationId, position, slide.type, slide.question, JSON.stringify(slide.options), JSON.stringify(slide.settings));
 }
 
-export function createPresentation(title: string, firstSlide: Slide) {
+export function createPresentation(title: string, pacing: Pacing, firstSlide: Slide) {
   let code: string;
   do code = String(randomInt(100000, 1000000));
   while (db.prepare("SELECT 1 FROM presentations WHERE code = ?").get(code));
@@ -67,13 +81,9 @@ export function createPresentation(title: string, firstSlide: Slide) {
   const id = uid();
   const token = randomUUID();
   transaction(() => {
-    db.prepare("INSERT INTO presentations (id, title, code, token, current_index, created_at) VALUES (?, ?, ?, ?, 0, ?)").run(
-      id,
-      title,
-      code,
-      token,
-      Date.now(),
-    );
+    db.prepare(
+      "INSERT INTO presentations (id, title, code, token, current_index, created_at, pacing, status) VALUES (?, ?, ?, ?, 0, ?, ?, 'draft')",
+    ).run(id, title, code, token, Date.now(), pacing);
     insertSlide(id, 0, firstSlide);
   });
   return { id, code, token };
@@ -108,6 +118,14 @@ export function saveSlides(id: string, title: string, slides: Slide[]) {
     });
     db.prepare("UPDATE presentations SET current_index = MIN(current_index, ?) WHERE id = ?").run(Math.max(0, slides.length - 1), id);
   });
+}
+
+export function updateSettings(id: string, settings: { pacing?: Pacing; status?: SessionStatus; showResults?: boolean }) {
+  if (settings.pacing) db.prepare("UPDATE presentations SET pacing = ? WHERE id = ?").run(settings.pacing, id);
+  if (settings.status) db.prepare("UPDATE presentations SET status = ? WHERE id = ?").run(settings.status, id);
+  if (settings.showResults !== undefined) {
+    db.prepare("UPDATE presentations SET show_results = ? WHERE id = ?").run(settings.showResults ? 1 : 0, id);
+  }
 }
 
 export function setCurrentIndex(id: string, index: number) {
@@ -148,6 +166,46 @@ export function addResponse(slideId: string, voterId: string, value: unknown, sc
       Date.now(),
     );
   });
+}
+
+/** One row per slide this participant answered: how many responses, and their quiz score. */
+export function voterResponses(presentationId: string, voterId: string) {
+  return db
+    .prepare(
+      `SELECT r.slide_id AS slideId, COUNT(*) AS count, MAX(r.score) AS score
+       FROM responses r JOIN slides s ON s.id = r.slide_id
+       WHERE s.presentation_id = ? AND r.voter_id = ?
+       GROUP BY r.slide_id`,
+    )
+    .all(presentationId, voterId) as unknown as { slideId: string; count: number; score: number }[];
+}
+
+/** How many different people answered each slide (a word cloud can get several answers per person). */
+export function respondentsBySlide(presentationId: string) {
+  const rows = db
+    .prepare(
+      `SELECT r.slide_id AS slideId, COUNT(DISTINCT r.voter_id) AS people
+       FROM responses r JOIN slides s ON s.id = r.slide_id
+       WHERE s.presentation_id = ?
+       GROUP BY r.slide_id`,
+    )
+    .all(presentationId) as unknown as { slideId: string; people: number }[];
+  return Object.fromEntries(rows.map((r) => [r.slideId, r.people]));
+}
+
+/** People who answered at least one question, and those who answered all `slideCount` of them. */
+export function progress(presentationId: string, slideCount: number) {
+  return db
+    .prepare(
+      `SELECT COUNT(*) AS started, COALESCE(SUM(CASE WHEN answered >= ? THEN 1 ELSE 0 END), 0) AS completed
+       FROM (
+         SELECT r.voter_id, COUNT(DISTINCT r.slide_id) AS answered
+         FROM responses r JOIN slides s ON s.id = r.slide_id
+         WHERE s.presentation_id = ?
+         GROUP BY r.voter_id
+       )`,
+    )
+    .get(slideCount, presentationId) as unknown as { started: number; completed: number };
 }
 
 export function voterName(presentationId: string, voterId: string) {

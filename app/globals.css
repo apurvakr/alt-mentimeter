@@ -1,15 +1,46 @@
 @import "tailwindcss";
 
+@theme inline {
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-heading), ui-sans-serif, system-ui, sans-serif;
+}
+
 @theme {
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Stage: the projector screen and the participant's way in */
+  --color-night: #14213d;
+  --color-night-raised: #1c2c50;
+  --color-night-line: #2c3e68;
+  --color-haze: #a9b4d0;
+  /* Paper: everything people read up close */
+  --color-mist: #eef1f8;
+  --color-line: #d6dcea;
+  --color-muted: #56627f;
+  /* Spotlight: the join code and the main action on each screen */
+  --color-marigold: #ffb703;
+  --color-marigold-deep: #eba800;
+  --color-teal: #1fa39a;
+  --color-rose: #f05d7e;
 }
 
 body {
-  background: var(--color-slate-50);
-  color: var(--color-slate-900);
+  background: var(--color-mist);
+  color: var(--color-night);
 }
 
-/* Native range inputs pick up the accent color. */
+:focus-visible {
+  outline: 3px solid var(--color-marigold);
+  outline-offset: 2px;
+}
+
 input[type="range"] {
-  accent-color: var(--color-indigo-600);
+  accent-color: var(--color-night);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

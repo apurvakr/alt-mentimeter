@@ -5,7 +5,17 @@ import { Server, type Socket } from "socket.io";
 import { aggregate, evaluate, publicSlide, quizWindow } from "./lib/logic";
 import { LIMITS, defaultSlide, isQuiz, sanitizeSlide, sanitizeText } from "./lib/slides";
 import * as store from "./lib/store";
-import type { AudienceState, HostState, QuizWindow, Results, Slide } from "./lib/types";
+import type {
+  AudienceState,
+  HostState,
+  Pacing,
+  PresentationSummary,
+  QuizOutcome,
+  QuizWindow,
+  Results,
+  SessionStatus,
+  Slide,
+} from "./lib/types";
 
 const dev = !process.argv.includes("--prod");
 const port = Number(process.env.PORT) || 3000;
@@ -43,11 +53,22 @@ function hostState(p: store.StoredPresentation): HostState {
     if (window) quiz[slide.id] = window;
   }
   return {
-    presentation: { id: p.id, title: p.title, code: p.code, currentIndex: p.currentIndex, slides: p.slides },
+    presentation: {
+      id: p.id,
+      title: p.title,
+      code: p.code,
+      currentIndex: p.currentIndex,
+      slides: p.slides,
+      pacing: p.pacing,
+      status: p.status,
+      showResults: p.showResults,
+    },
     results,
     quiz,
     leaderboard: store.leaderboard(p.id),
     participants: io.sockets.adapter.rooms.get(audienceRoom(p.id))?.size ?? 0,
+    progress: store.progress(p.id, p.slides.length),
+    respondents: store.respondentsBySlide(p.id),
     joinUrl: `${publicUrl}/vote/${p.code}`,
     joinHost,
     serverNow: Date.now(),
@@ -57,22 +78,44 @@ function hostState(p: store.StoredPresentation): HostState {
 const currentSlide = (p: store.StoredPresentation): Slide | undefined =>
   p.slides[Math.min(p.currentIndex, p.slides.length - 1)];
 
-function audienceState(p: store.StoredPresentation, voterId: string): AudienceState {
-  const slide = currentSlide(p);
-  const base = { title: p.title, total: p.slides.length, name: store.voterName(p.id, voterId), serverNow: Date.now() };
-  if (!slide) return { ...base, index: 0, slide: null, mine: 0, quiz: null, quizResult: null };
+const outcome = (score: number): QuizOutcome => ({ correct: score > 0, points: score });
 
-  const mine = store.responsesByVoter(slide.id, voterId);
-  const window = isQuiz(slide.type) ? quizWindow(slide, p.quizStartedAt[slide.id]) : null;
-  const ended = window !== null && Date.now() > window.endsAt;
-  return {
-    ...base,
-    index: p.slides.indexOf(slide),
-    slide: publicSlide(slide),
-    mine: mine.length,
-    quiz: window,
-    quizResult: ended && mine.length ? { correct: mine[0].score > 0, points: mine[0].score } : null,
+function audienceState(p: store.StoredPresentation, voterId: string): AudienceState {
+  const state: AudienceState = {
+    title: p.title,
+    status: p.status,
+    pacing: p.pacing,
+    slides: [],
+    currentIndex: 0,
+    total: p.slides.length,
+    mine: {},
+    quiz: {},
+    quizResults: {},
+    name: store.voterName(p.id, voterId),
+    serverNow: Date.now(),
   };
+  if (p.status !== "open") return state;
+
+  const current = currentSlide(p);
+  const visible = p.pacing === "self" ? p.slides : current ? [current] : [];
+  const answered = new Map(store.voterResponses(p.id, voterId).map((r) => [r.slideId, r]));
+  for (const slide of visible) {
+    const mine = answered.get(slide.id);
+    state.mine[slide.id] = mine?.count ?? 0;
+    if (!isQuiz(slide.type)) continue;
+    // Self-paced quizzes show the outcome straight away; timed ones once the timer ends.
+    if (p.pacing === "self") {
+      if (mine) state.quizResults[slide.id] = outcome(mine.score);
+      continue;
+    }
+    const window = quizWindow(slide, p.quizStartedAt[slide.id]);
+    if (!window) continue;
+    state.quiz[slide.id] = window;
+    if (mine && Date.now() > window.endsAt) state.quizResults[slide.id] = outcome(mine.score);
+  }
+  state.slides = visible.map(publicSlide);
+  if (current && p.pacing === "presenter") state.currentIndex = p.slides.indexOf(current);
+  return state;
 }
 
 // Votes can arrive in bursts, so presenter updates are batched.
@@ -125,6 +168,10 @@ function authorize(payload: Payload) {
   return p;
 }
 
+const asPacing = (value: unknown): Pacing | undefined => (value === "self" || value === "presenter" ? value : undefined);
+const asStatus = (value: unknown): SessionStatus | undefined =>
+  value === "draft" || value === "open" || value === "closed" ? value : undefined;
+
 function findSlide(p: store.StoredPresentation, slideId: unknown) {
   const slide = p.slides.find((s) => s.id === slideId);
   if (!slide) throw new Error("Slide not found");
@@ -132,9 +179,41 @@ function findSlide(p: store.StoredPresentation, slideId: unknown) {
 }
 
 io.on("connection", (socket) => {
-  on(socket, "presentation:create", ({ title }) =>
-    store.createPresentation(sanitizeText(title, LIMITS.title) || "Untitled presentation", defaultSlide("multiple_choice")),
+  on(socket, "presentation:create", ({ title, pacing }) =>
+    store.createPresentation(
+      sanitizeText(title, LIMITS.title) || "Untitled presentation",
+      asPacing(pacing) ?? "self",
+      defaultSlide("multiple_choice"),
+    ),
   );
+
+  // The host dashboard lists presentations saved in this browser; check each still exists.
+  on(socket, "host:summaries", ({ items }) =>
+    (Array.isArray(items) ? items : []).slice(0, 100).map((item): PresentationSummary => {
+      const { id, token } = (item ?? {}) as Record<string, unknown>;
+      const p = typeof id === "string" ? store.getPresentation(id) : null;
+      if (!p || p.token !== token) return { id: String(id), missing: true };
+      return {
+        id: p.id,
+        title: p.title,
+        code: p.code,
+        status: p.status,
+        pacing: p.pacing,
+        slides: p.slides.length,
+        started: store.progress(p.id, p.slides.length).started,
+      };
+    }),
+  );
+
+  on(socket, "host:settings", (payload) => {
+    const p = authorize(payload);
+    store.updateSettings(p.id, {
+      pacing: asPacing(payload.pacing),
+      status: asStatus(payload.status),
+      showResults: typeof payload.showResults === "boolean" ? payload.showResults : undefined,
+    });
+    refresh(p.id);
+  });
 
   on(socket, "host:join", (payload) => {
     const p = authorize(payload);
@@ -164,6 +243,7 @@ io.on("connection", (socket) => {
     const p = authorize(payload);
     const slide = findSlide(p, payload.slideId);
     if (!isQuiz(slide.type)) throw new Error("Only quiz slides have a timer");
+    if (p.pacing === "self") throw new Error("Quizzes in a self-paced survey aren't timed");
     const now = Date.now();
     store.startQuiz(slide.id, now);
     clearTimeout(quizTimers.get(slide.id));
@@ -196,7 +276,8 @@ io.on("connection", (socket) => {
     const { presentationId, voterId } = socket.data as { presentationId?: string; voterId?: string };
     const p = presentationId && voterId ? store.getPresentation(presentationId) : null;
     if (!p || !voterId) throw new Error("Join a presentation first");
-    const slide = currentSlide(p);
+    if (p.status !== "open") throw new Error(p.status === "closed" ? "This session has ended" : "This session hasn't started yet");
+    const slide = p.pacing === "self" ? p.slides.find((s) => s.id === slideId) : currentSlide(p);
     if (!slide || slide.id !== slideId) throw new Error("That question is no longer open");
 
     if (isQuiz(slide.type)) {
@@ -209,6 +290,7 @@ io.on("connection", (socket) => {
       mine: store.responsesByVoter(slide.id, voterId),
       window: quizWindow(slide, p.quizStartedAt[slide.id]),
       now: Date.now(),
+      selfPaced: p.pacing === "self",
     });
     if ("error" in result) throw new Error(result.error);
     store.addResponse(slide.id, voterId, result.value, result.score, result.replace);

@@ -21,7 +21,11 @@ const isIndex = (value: unknown, length: number): value is number =>
 type Evaluation = { error: string } | { value: unknown; score: number; replace: boolean };
 
 /** Validates one participant response and scores it. `replace` means it overwrites their earlier answer. */
-export function evaluate(slide: Slide, raw: unknown, ctx: { mine: ResponseRow[]; window: QuizWindow | null; now: number }): Evaluation {
+export function evaluate(
+  slide: Slide,
+  raw: unknown,
+  ctx: { mine: ResponseRow[]; window: QuizWindow | null; now: number; selfPaced: boolean },
+): Evaluation {
   const v = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const text = typeof v.text === "string" ? v.text.trim().replace(/\s+/g, " ") : "";
 
@@ -54,9 +58,12 @@ export function evaluate(slide: Slide, raw: unknown, ctx: { mine: ResponseRow[];
 
     case "quiz_select":
     case "quiz_type": {
-      const { window, now } = ctx;
-      if (!window) return { error: "The presenter hasn't started this question yet" };
-      if (now > window.endsAt + GRACE_MS) return { error: "Time's up!" };
+      const { window, now, selfPaced } = ctx;
+      // Self-paced quizzes have no timer.
+      if (!selfPaced) {
+        if (!window) return { error: "The presenter hasn't started this question yet" };
+        if (now > window.endsAt + GRACE_MS) return { error: "Time's up!" };
+      }
       if (ctx.mine.length) return { error: "You've already answered" };
 
       let correct: boolean;
@@ -71,6 +78,7 @@ export function evaluate(slide: Slide, raw: unknown, ctx: { mine: ResponseRow[];
         correct = (slide.settings.acceptedAnswers ?? []).some((a) => a && normalize(a) === normalize(text));
         value = { text };
       }
+      if (selfPaced || !window) return { value, score: correct ? 1000 : 0, replace: false };
       // Correct answers earn 500–1000 points; faster answers earn more.
       const remaining = Math.max(0, window.endsAt - now) / (window.endsAt - window.startedAt);
       return { value, score: correct ? Math.round(500 + 500 * remaining) : 0, replace: false };

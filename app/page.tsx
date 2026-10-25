@@ -2,114 +2,60 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
-import { Button, ErrorText, Input, Label } from "@/components/ui";
-import { type SavedPresentation, call, errorMessage, forgetPresentation, savePresentation, savedPresentations } from "@/lib/client";
-import { LIMITS, formatCode } from "@/lib/slides";
+import { type FormEvent, useState } from "react";
+import { Button, Logo } from "@/components/ui";
+import { formatCode } from "@/lib/slides";
 
-export default function Home() {
+/** Participants land here: one job, entering the code on the screen. */
+export default function JoinPage() {
   const router = useRouter();
-  const [code, setCode] = useState("");
-  const [title, setTitle] = useState("");
-  const [mine, setMine] = useState<SavedPresentation[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => setMine(savedPresentations()), []);
-
-  const digits = code.replace(/\D/g, "");
+  const [digits, setDigits] = useState("");
 
   function join(e: FormEvent) {
     e.preventDefault();
     if (digits.length === 6) router.push(`/vote/${digits}`);
   }
 
-  async function create(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const p = await call<{ id: string; code: string; token: string }>("presentation:create", { title });
-      savePresentation({ ...p, title: title.trim() || "Untitled presentation" });
-      router.push(`/edit/${p.id}`);
-    } catch (err) {
-      setError(errorMessage(err));
-      setBusy(false);
-    }
-  }
-
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-10 px-4 py-12 sm:py-20">
-      <header className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight">Live Poll</h1>
-        <p className="mt-2 text-slate-600">Polls, word clouds and quizzes your audience answers from their phones.</p>
+    <main className="flex min-h-dvh flex-col bg-night text-white">
+      <header className="px-6 py-5">
+        <Logo onNight />
       </header>
 
-      <form onSubmit={join} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold">Join a presentation</h2>
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-          <Input
+      <section className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-6 pb-16">
+        <h1 className="font-display text-5xl font-extrabold leading-[1.02] tracking-tight sm:text-6xl">Enter the code on the screen</h1>
+        <p className="mt-4 text-lg text-haze">Your presenter is showing a 6-digit number. Type it below to join.</p>
+
+        <form onSubmit={join} className="mt-10">
+          <label htmlFor="code" className="sr-only">
+            Code
+          </label>
+          <input
+            id="code"
             inputMode="numeric"
             autoComplete="off"
-            placeholder="123 456"
-            aria-label="Presentation code"
+            autoFocus
+            placeholder="000 000"
             value={formatCode(digits)}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            className="text-center text-2xl font-semibold tracking-widest sm:text-left"
+            onChange={(e) => setDigits(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            className="w-full rounded-3xl bg-night-raised px-4 py-5 text-center font-display text-5xl font-extrabold tracking-[0.18em] text-marigold tabular-nums ring-2 ring-night-line placeholder:text-night-line focus:outline-none focus:ring-marigold sm:text-6xl"
           />
-          <Button type="submit" disabled={digits.length !== 6} className="sm:w-32">
+          <Button
+            type="submit"
+            disabled={digits.length !== 6}
+            className="mt-4 w-full py-4 text-lg disabled:bg-night-raised disabled:text-haze"
+          >
             Join
           </Button>
-        </div>
-      </form>
-
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold">Create a presentation</h2>
-        <form onSubmit={create} className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-          <label className="flex-1">
-            <Label>Title</Label>
-            <Input value={title} maxLength={LIMITS.title} placeholder="Team retro" onChange={(e) => setTitle(e.target.value)} />
-          </label>
-          <Button type="submit" disabled={busy} className="sm:w-32">
-            {busy ? "Creating…" : "Create"}
-          </Button>
         </form>
-        <div className="mt-2">
-          <ErrorText>{error}</ErrorText>
-        </div>
-
-        {mine.length > 0 && (
-          <>
-            <h3 className="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-500">Your presentations</h3>
-            <ul className="mt-2 divide-y divide-slate-100">
-              {mine.map((p) => (
-                <li key={p.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{p.title}</p>
-                    <p className="text-sm text-slate-500">Code {formatCode(p.code)}</p>
-                  </div>
-                  <Link href={`/edit/${p.id}`} className="text-sm font-semibold text-indigo-600 hover:underline">
-                    Edit
-                  </Link>
-                  <Link href={`/present/${p.id}`} className="text-sm font-semibold text-indigo-600 hover:underline">
-                    Present
-                  </Link>
-                  <button
-                    className="text-sm text-slate-400 hover:text-red-600"
-                    onClick={() => {
-                      forgetPresentation(p.id);
-                      setMine(savedPresentations());
-                    }}
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-2 text-xs text-slate-400">Saved in this browser. Removing hides it here; it stays on the server.</p>
-          </>
-        )}
       </section>
+
+      <footer className="px-6 py-6 text-center text-sm text-haze">
+        Running a session?{" "}
+        <Link href="/host" className="font-bold text-white underline underline-offset-4 hover:text-marigold">
+          Open the host dashboard
+        </Link>
+      </footer>
     </main>
   );
 }

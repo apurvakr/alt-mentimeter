@@ -50,6 +50,14 @@ db.exec(`
   );
 `);
 
+// Columns added after the first release; older databases get them here.
+const presentationColumns = new Set(
+  (db.prepare("PRAGMA table_info(presentations)").all() as unknown as { name: string }[]).map((c) => c.name),
+);
+if (!presentationColumns.has("pacing")) db.exec("ALTER TABLE presentations ADD COLUMN pacing TEXT NOT NULL DEFAULT 'presenter'");
+if (!presentationColumns.has("status")) db.exec("ALTER TABLE presentations ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
+if (!presentationColumns.has("show_results")) db.exec("ALTER TABLE presentations ADD COLUMN show_results INTEGER NOT NULL DEFAULT 0");
+
 export function transaction<T>(fn: () => T): T {
   db.exec("BEGIN");
   try {

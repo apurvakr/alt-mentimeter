@@ -1,29 +1,59 @@
 "use client";
 
 import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, XAxis } from "recharts";
-import type { LeaderboardEntry, Results as ResultsData, Slide } from "@/lib/types";
+import { optionColor, optionLabel, optionLetter } from "@/lib/palette";
 import { normalize } from "@/lib/slides";
+import type { LeaderboardEntry, Results as ResultsData, Slide } from "@/lib/types";
 import { WordCloud } from "./WordCloud";
 
-const BAR_COLORS = ["#4f46e5", "#0891b2", "#db2777", "#ea580c", "#16a34a", "#7c3aed", "#ca8a04", "#475569"];
+const LINE = "#2c3e68";
 
-export const optionLabel = (option: string, i: number) => option || `Option ${i + 1}`;
+/** Splits a label into at most two lines of roughly `max` characters. */
+function wrap(text: string, max = 18) {
+  if (text.length <= max) return [text];
+  const words = text.split(" ");
+  let first = "";
+  while (words.length && (first + " " + words[0]).trim().length <= max) first = (first + " " + words.shift()).trim();
+  if (!first) first = words.shift() ?? "";
+  const rest = words.join(" ");
+  return [first, rest.length > max ? `${rest.slice(0, max - 1)}…` : rest].filter(Boolean);
+}
 
-/** Live results for one slide. `reveal` shows quiz answers. */
+function OptionTick({ x = 0, y = 0, payload }: { x?: number; y?: number; payload?: { value: string; index: number } }) {
+  if (!payload) return null;
+  const lines = wrap(payload.value);
+  return (
+    <g transform={`translate(${x},${y + 14})`}>
+      <text textAnchor="middle" fill="#e6eaf5" fontSize={18}>
+        {lines.map((line, i) => (
+          <tspan key={i} x={0} dy={i === 0 ? 8 : 22}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  );
+}
+
+/** Live results for one slide, styled for the dark presenter screen. `reveal` shows quiz answers. */
 export function Results({ slide, results, reveal = false }: { slide: Slide; results: ResultsData; reveal?: boolean }) {
   switch (results.kind) {
     case "choices": {
-      const data = slide.options.map((o, i) => ({ label: optionLabel(o, i), count: results.counts[i] ?? 0 }));
+      const data = slide.options.map((o, i) => ({ label: `${optionLetter(i)}  ${optionLabel(o, i)}`, count: results.counts[i] ?? 0 }));
       const correct = slide.settings.correctIndex;
       return (
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 36, right: 8, left: 8, bottom: 8 }}>
-            <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: "#cbd5e1" }} interval={0} tick={{ fontSize: 18, fill: "#334155" }} />
-            <Bar dataKey="count" radius={[8, 8, 0, 0]} maxBarSize={160} animationDuration={400}>
+          <BarChart data={data} margin={{ top: 44, right: 8, left: 8, bottom: 30 }}>
+            <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: LINE }} interval={0} tick={<OptionTick />} />
+            <Bar dataKey="count" radius={[12, 12, 0, 0]} maxBarSize={170} animationDuration={500}>
               {data.map((_, i) => (
-                <Cell key={i} fill={reveal ? (i === correct ? "#16a34a" : "#cbd5e1") : BAR_COLORS[i % BAR_COLORS.length]} />
+                <Cell key={i} fill={reveal ? (i === correct ? "#1fa39a" : LINE) : optionColor(i)} />
               ))}
-              <LabelList dataKey="count" position="top" style={{ fontSize: 24, fontWeight: 700, fill: "#0f172a" }} />
+              <LabelList
+                dataKey="count"
+                position="top"
+                style={{ fontSize: 30, fontWeight: 800, fill: "#ffffff", fontFamily: "var(--font-heading)" }}
+              />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -36,9 +66,9 @@ export function Results({ slide, results, reveal = false }: { slide: Slide; resu
     case "texts":
       if (!results.entries.length) return <Waiting />;
       return (
-        <div className="grid h-full auto-rows-min grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid h-full auto-rows-min grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
           {results.entries.map((e) => (
-            <p key={e.id} className="rounded-xl bg-white p-4 text-lg shadow-sm ring-1 ring-slate-200">
+            <p key={e.id} className="rounded-2xl bg-night-raised p-5 text-xl leading-snug text-white">
               {e.text}
             </p>
           ))}
@@ -48,26 +78,26 @@ export function Results({ slide, results, reveal = false }: { slide: Slide; resu
     case "scales": {
       const max = slide.settings.scaleMax ?? 5;
       return (
-        <div className="flex h-full flex-col justify-center gap-8 px-2">
+        <div className="flex h-full flex-col justify-center gap-9">
           {slide.options.map((statement, i) => {
             const avg = results.averages[i];
             const pct = avg == null ? 0 : ((avg - 1) / (max - 1)) * 100;
             return (
               <div key={i}>
-                <div className="flex items-baseline justify-between gap-4">
-                  <p className="text-xl font-medium">{optionLabel(statement, i)}</p>
-                  <p className="text-2xl font-bold tabular-nums text-indigo-600">{avg == null ? "–" : avg.toFixed(1)}</p>
+                <div className="flex items-baseline justify-between gap-6">
+                  <p className="text-2xl text-white">{optionLabel(statement, i)}</p>
+                  <p className="font-display text-4xl font-extrabold tabular-nums text-marigold">{avg == null ? "–" : avg.toFixed(1)}</p>
                 </div>
-                <div className="relative mt-3 h-3 rounded-full bg-slate-200">
-                  <div className="absolute inset-y-0 left-0 rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${pct}%` }} />
+                <div className="relative mt-3 h-3 rounded-full bg-night-line">
+                  <div className="absolute inset-y-0 left-0 rounded-full bg-marigold transition-[width] duration-500" style={{ width: `${pct}%` }} />
                 </div>
               </div>
             );
           })}
-          <div className="flex justify-between text-sm text-slate-500">
-            <span>1 · {slide.settings.minLabel}</span>
+          <div className="flex justify-between text-base text-haze">
+            <span>1 = {slide.settings.minLabel || "lowest"}</span>
             <span>
-              {slide.settings.maxLabel} · {max}
+              {max} = {slide.settings.maxLabel || "highest"}
             </span>
           </div>
         </div>
@@ -77,24 +107,26 @@ export function Results({ slide, results, reveal = false }: { slide: Slide; resu
     case "quizText": {
       const accepted = new Set((slide.settings.acceptedAnswers ?? []).filter(Boolean).map(normalize));
       return (
-        <div className="flex h-full flex-col items-center justify-center gap-6">
-          <p className="text-5xl font-bold tabular-nums">
+        <div className="flex h-full flex-col items-center justify-center gap-6 text-center">
+          <p className="font-display text-7xl font-extrabold tabular-nums text-white">
             {results.correct}
-            <span className="text-slate-400"> / {results.total}</span>
+            <span className="text-haze"> / {results.total}</span>
           </p>
-          <p className="text-lg text-slate-600">answered correctly</p>
+          <p className="text-xl text-haze">got it right</p>
           {reveal && (
             <>
-              <p className="text-xl">
-                Answer: <strong>{[...(slide.settings.acceptedAnswers ?? [])].filter(Boolean).join(" / ")}</strong>
+              <p className="text-2xl text-white">
+                The answer: <strong className="text-marigold">{(slide.settings.acceptedAnswers ?? []).filter(Boolean).join(" or ")}</strong>
               </p>
-              <ul className="flex flex-wrap justify-center gap-2">
+              <ul className="flex max-w-3xl flex-wrap justify-center gap-2">
                 {results.answers.map((a) => (
                   <li
                     key={a.text}
-                    className={`rounded-full px-3 py-1 text-sm font-medium ${accepted.has(normalize(a.text)) ? "bg-green-100 text-green-800" : "bg-slate-100 text-slate-700"}`}
+                    className={`rounded-full px-4 py-1.5 text-base font-bold ${
+                      accepted.has(normalize(a.text)) ? "bg-teal/25 text-[#9ff0e8]" : "bg-night-raised text-haze"
+                    }`}
                   >
-                    {a.text} · {a.count}
+                    {a.text} ({a.count})
                   </li>
                 ))}
               </ul>
@@ -107,22 +139,24 @@ export function Results({ slide, results, reveal = false }: { slide: Slide; resu
 }
 
 function Waiting() {
-  return <div className="flex h-full items-center justify-center text-xl text-slate-400">Waiting for answers…</div>;
+  return <div className="flex h-full items-center justify-center text-2xl text-haze">No answers yet</div>;
 }
 
 export function Leaderboard({ entries }: { entries: LeaderboardEntry[] }) {
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Leaderboard</h3>
+    <div className="rounded-3xl bg-night-raised p-6">
+      <h3 className="font-display text-xl font-bold text-white">Leaderboard</h3>
       {entries.length === 0 ? (
-        <p className="mt-3 text-slate-400">No points yet</p>
+        <p className="mt-3 text-haze">No points yet</p>
       ) : (
-        <ol className="mt-3 space-y-2">
+        <ol className="mt-4 space-y-3">
           {entries.slice(0, 5).map((e, i) => (
-            <li key={`${e.name}-${i}`} className="flex items-center gap-3 text-lg">
-              <span className="w-6 text-right font-bold text-slate-400">{i + 1}</span>
-              <span className="flex-1 truncate font-medium">{e.name}</span>
-              <span className="font-bold tabular-nums">{e.score}</span>
+            <li key={`${e.name}-${i}`} className="flex items-center gap-3 text-lg text-white">
+              <span className={`grid size-8 place-items-center rounded-full font-display font-extrabold ${i === 0 ? "bg-marigold text-night" : "bg-night-line"}`}>
+                {i + 1}
+              </span>
+              <span className="flex-1 truncate">{e.name}</span>
+              <span className="font-display font-bold tabular-nums">{e.score}</span>
             </li>
           ))}
         </ol>
