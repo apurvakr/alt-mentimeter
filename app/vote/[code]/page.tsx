@@ -248,6 +248,8 @@ function Question(props: QuestionProps) {
       {(slide.type === "word_cloud" || slide.type === "open_ended") && <TextVote {...props} />}
       {slide.type === "scales" && <ScalesVote {...props} />}
       {isQuiz(slide.type) && <QuizVote {...props} />}
+      {slide.type === "ranking" && <RankingVote {...props} />}
+      {slide.type === "qa" && <QaVote {...props} />}
     </section>
   );
 }
@@ -424,6 +426,160 @@ function ScalesVote({ slide, state, onState, after }: QuestionProps) {
         Submit ratings
       </Button>
       <ErrorText>{error}</ErrorText>
+    </>
+  );
+}
+
+function RankingVote({ slide, state, onState, after }: QuestionProps) {
+  const [order, setOrder] = useState(() => slide.options.map((_, i) => i));
+  const [editing, setEditing] = useState(false);
+  const { submit, busy, error } = useSubmit(slide, onState);
+
+  if (state.mine[slide.id] && !editing) {
+    return (
+      <Answered onChange={() => setEditing(true)} after={after}>
+        Your ranking is in
+      </Answered>
+    );
+  }
+
+  function move(from: number, to: number) {
+    const next = [...order];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    setOrder(next);
+  }
+
+  const arrow = "grid size-11 place-items-center rounded-xl bg-mist text-xl font-bold text-night hover:bg-line disabled:opacity-30 disabled:hover:bg-mist";
+  return (
+    <>
+      <p className="text-muted">Put your top choice first. Use the arrows to move items up and down.</p>
+      <ol className="flex flex-col gap-2.5">
+        {order.map((option, position) => {
+          const label = optionLabel(slide.options[option], option);
+          return (
+            <li key={option} className="flex items-center gap-3 rounded-2xl bg-white p-2.5 ring-1 ring-line">
+              <span
+                className="grid size-11 shrink-0 place-items-center rounded-xl font-display text-xl font-extrabold text-night"
+                style={{ background: optionColor(option) }}
+              >
+                {position + 1}
+              </span>
+              <span className="min-w-0 flex-1 break-words text-lg font-bold">{label}</span>
+              <span className="flex shrink-0 gap-1">
+                <button className={arrow} disabled={position === 0} onClick={() => move(position, position - 1)} aria-label={`Move ${label} up`}>
+                  ↑
+                </button>
+                <button
+                  className={arrow}
+                  disabled={position === order.length - 1}
+                  onClick={() => move(position, position + 1)}
+                  aria-label={`Move ${label} down`}
+                >
+                  ↓
+                </button>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <Button className="py-3.5 text-base" disabled={busy} onClick={async () => (await submit({ order })) && setEditing(false)}>
+        Submit ranking
+      </Button>
+      <ErrorText>{error}</ErrorText>
+    </>
+  );
+}
+
+function QaVote({ slide, state, onState }: QuestionProps) {
+  const [text, setText] = useState("");
+  const [sent, setSent] = useState(false);
+  const [voteError, setVoteError] = useState("");
+  const { submit, busy, error } = useSubmit(slide, onState);
+  const questions = state.qa[slide.id] ?? [];
+  const left = LIMITS.qaPerPerson - (state.mine[slide.id] ?? 0);
+
+  async function send(e: FormEvent) {
+    e.preventDefault();
+    if (await submit({ text })) {
+      setText("");
+      setSent(true);
+    }
+  }
+
+  async function upvote(responseId: number) {
+    setVoteError("");
+    try {
+      onState(await call<AudienceState>("audience:upvote", { responseId }));
+    } catch (e) {
+      setVoteError(errorMessage(e));
+    }
+  }
+
+  return (
+    <>
+      {left > 0 ? (
+        <form onSubmit={send} className="flex flex-col gap-3">
+          <textarea
+            value={text}
+            maxLength={LIMITS.qaQuestion}
+            rows={3}
+            placeholder="Type your question"
+            onChange={(e) => {
+              setText(e.target.value);
+              setSent(false);
+            }}
+            className="w-full rounded-xl border border-line bg-white px-4 py-3 text-lg focus:border-night focus:outline-none"
+          />
+          <div className="flex justify-between text-sm text-muted">
+            <span>Questions are anonymous</span>
+            <span className="tabular-nums">
+              {text.length}/{LIMITS.qaQuestion}
+            </span>
+          </div>
+          <Button type="submit" className="py-3.5 text-base" disabled={!text.trim() || busy}>
+            Send question
+          </Button>
+          {sent && (
+            <p role="status" className="text-center font-bold text-[#0d5c57]">
+              Question sent. You can ask {left} more.
+            </p>
+          )}
+        </form>
+      ) : (
+        <p role="status" className="rounded-2xl bg-white p-4 text-center text-muted ring-1 ring-line">
+          You&apos;ve asked {LIMITS.qaPerPerson} questions, the most allowed. You can still upvote others.
+        </p>
+      )}
+      <ErrorText>{error}</ErrorText>
+
+      <h2 className="mt-3 font-display text-xl font-bold">{questions.length ? "Questions so far" : "No questions yet. Be the first to ask."}</h2>
+      {questions.length > 0 && <p className="-mt-3 text-sm text-muted">Upvote the ones you want answered.</p>}
+      <ul className="flex flex-col gap-2.5">
+        {questions.map((q) => (
+          <li key={q.id} className={`flex items-start gap-3 rounded-2xl bg-white p-3 ring-1 ring-line ${q.answered ? "opacity-60" : ""}`}>
+            <button
+              onClick={() => upvote(q.id)}
+              disabled={q.mine}
+              aria-pressed={q.voted}
+              aria-label={q.mine ? `Your question, ${q.votes} upvotes` : `${q.voted ? "Remove your upvote" : "Upvote"}, ${q.votes} so far`}
+              className={`flex w-14 shrink-0 flex-col items-center rounded-xl py-1.5 font-bold transition-colors disabled:cursor-default ${
+                q.voted ? "bg-night text-white" : "bg-mist text-night hover:bg-line disabled:hover:bg-mist"
+              }`}
+            >
+              <span aria-hidden="true">▲</span>
+              <span className="tabular-nums">{q.votes}</span>
+            </button>
+            <div className="min-w-0 flex-1 pt-1">
+              <p className="break-words text-lg leading-snug">{q.text}</p>
+              {(q.mine || q.answered) && (
+                <p className="mt-1 text-sm font-bold text-muted">{[q.mine && "Your question", q.answered && "Answered"].filter(Boolean).join(", ")}</p>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <ErrorText>{voteError}</ErrorText>
     </>
   );
 }

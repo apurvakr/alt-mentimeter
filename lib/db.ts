@@ -42,6 +42,13 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS responses_by_slide ON responses(slide_id, voter_id);
 
+  -- Upvotes on Q&A questions, which are stored as responses.
+  CREATE TABLE IF NOT EXISTS qa_votes (
+    response_id INTEGER NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+    voter_id    TEXT NOT NULL,
+    PRIMARY KEY (response_id, voter_id)
+  );
+
   CREATE TABLE IF NOT EXISTS voters (
     presentation_id TEXT NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
     voter_id        TEXT NOT NULL,
@@ -57,6 +64,8 @@ const presentationColumns = new Set(
 if (!presentationColumns.has("pacing")) db.exec("ALTER TABLE presentations ADD COLUMN pacing TEXT NOT NULL DEFAULT 'presenter'");
 if (!presentationColumns.has("status")) db.exec("ALTER TABLE presentations ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
 if (!presentationColumns.has("show_results")) db.exec("ALTER TABLE presentations ADD COLUMN show_results INTEGER NOT NULL DEFAULT 0");
+const responseColumns = new Set((db.prepare("PRAGMA table_info(responses)").all() as unknown as { name: string }[]).map((c) => c.name));
+if (!responseColumns.has("answered")) db.exec("ALTER TABLE responses ADD COLUMN answered INTEGER NOT NULL DEFAULT 0");
 
 export function transaction<T>(fn: () => T): T {
   db.exec("BEGIN");

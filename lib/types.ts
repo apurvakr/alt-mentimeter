@@ -4,7 +4,9 @@ export type SlideType =
   | "open_ended"
   | "scales"
   | "quiz_select"
-  | "quiz_type";
+  | "quiz_type"
+  | "ranking"
+  | "qa";
 
 /** "self": everyone gets every question at once; "presenter": one question at a time, moved on by the presenter. */
 export type Pacing = "presenter" | "self";
@@ -30,7 +32,7 @@ export interface Slide {
   id: string;
   type: SlideType;
   question: string;
-  /** choices for multiple choice / quiz_select, statements for scales */
+  /** choices for multiple choice / quiz_select, statements for scales, items for ranking */
   options: string[];
   settings: SlideSettings;
 }
@@ -61,7 +63,18 @@ export type Results =
   | { kind: "words"; words: { text: string; count: number }[]; total: number }
   | { kind: "texts"; entries: { id: number; text: string }[]; total: number }
   | { kind: "scales"; averages: (number | null)[]; total: number }
-  | { kind: "quizText"; correct: number; answers: { text: string; count: number }[]; total: number };
+  | { kind: "quizText"; correct: number; answers: { text: string; count: number }[]; total: number }
+  /** average position of each option (1 = top), in option order */
+  | { kind: "ranking"; averages: (number | null)[]; total: number }
+  | { kind: "qa"; questions: QaQuestion[]; total: number };
+
+/** A question asked on a Q&A slide. */
+export interface QaQuestion {
+  id: number;
+  text: string;
+  votes: number;
+  answered: boolean;
+}
 
 export interface LeaderboardEntry {
   name: string;
@@ -115,6 +128,8 @@ export interface AudienceState {
   mine: Record<string, number>;
   quiz: Record<string, QuizWindow>;
   quizResults: Record<string, QuizOutcome>;
+  /** Q&A slides: everyone's questions, with whether this participant upvoted or asked each one */
+  qa: Record<string, (QaQuestion & { voted: boolean; mine: boolean })[]>;
   name: string | null;
   serverNow: number;
 }

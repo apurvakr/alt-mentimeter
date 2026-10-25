@@ -27,6 +27,17 @@ export function onConnect(fn: () => void) {
   };
 }
 
+/** Asks the server for every participant's answers and saves them as a CSV file. */
+export async function downloadResults(id: string, token: string | null | undefined) {
+  const { filename, csv } = await call<{ filename: string; csv: string }>("host:export", { id, token });
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const errorMessage = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
 
 function read<T>(key: string, fallback: T): T {

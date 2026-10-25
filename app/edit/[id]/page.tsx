@@ -293,6 +293,17 @@ function SlideEditor({ slide, pacing, onChange }: { slide: Slide; pacing: Pacing
         />
       )}
 
+      {slide.type === "ranking" && (
+        <ListEditor label="Items to rank" items={slide.options} addLabel="Add an item" onChange={(options) => set({ options })} min={2} />
+      )}
+
+      {slide.type === "qa" && (
+        <p className="text-sm text-muted">
+          Participants type questions and upvote each other&apos;s. Each person can ask up to {LIMITS.qaPerPerson}. Questions appear on the presenter
+          screen straight away, most upvoted first, and you can mark them answered as you go.
+        </p>
+      )}
+
       {slide.type === "scales" && (
         <>
           <ListEditor label="Statements to rate" items={slide.options} addLabel="Add a statement" onChange={(options) => set({ options })} min={1} />

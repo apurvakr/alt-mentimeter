@@ -7,7 +7,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Leaderboard, Results } from "@/components/Results";
 import { Button, ErrorText, StatusPill } from "@/components/ui";
 import { useNow } from "@/components/useNow";
-import { call, errorMessage, getSocket, onConnect, tokenFor } from "@/lib/client";
+import { call, downloadResults, errorMessage, getSocket, onConnect, tokenFor } from "@/lib/client";
 import { optionColor, optionLabel, optionLetter } from "@/lib/palette";
 import { formatCode, isQuiz, slideLabel } from "@/lib/slides";
 import type { HostState } from "@/lib/types";
@@ -112,7 +112,7 @@ export default function PresentPage() {
 
   let body: ReactNode;
   if (p.status === "draft") body = <ReadyToPublish state={state} onPublish={() => send("host:settings", { status: "open" })} />;
-  else if (p.pacing === "self") body = p.showResults ? <ResultsView state={state} index={position} /> : <Progress state={state} />;
+  else if (p.pacing === "self") body = p.showResults ? <ResultsView state={state} index={position} send={send} /> : <Progress state={state} />;
   else body = <LiveQuestion state={state} offset={offset} send={send} />;
 
   const slide = p.slides[position];
@@ -156,6 +156,17 @@ export default function PresentPage() {
               Clear answers
             </Button>
           )}
+          {count > 0 && (
+            <Button
+              variant="onNight"
+              onClick={() => {
+                setError("");
+                downloadResults(id, token).catch((e) => setError(errorMessage(e)));
+              }}
+            >
+              Download CSV
+            </Button>
+          )}
           {p.status === "open" && (
             <Button variant="onNight" onClick={() => send("host:settings", { status: "closed" })}>
               Close voting
@@ -176,7 +187,7 @@ export default function PresentPage() {
 }
 
 function Stage({ children }: { children: ReactNode }) {
-  return <main className="flex h-dvh flex-col bg-night text-white">{children}</main>;
+  return <main className="flex h-dvh flex-col bg-night text-white [color-scheme:dark]">{children}</main>;
 }
 
 function JoinBar({ state }: { state: HostState }) {
@@ -277,7 +288,7 @@ function Count({ value, label }: { value: number; label: string }) {
 }
 
 /** Self-paced, results shown: one question's results at a time. */
-function ResultsView({ state, index }: { state: HostState; index: number }) {
+function ResultsView({ state, index, send }: { state: HostState; index: number; send: Send }) {
   const slide = state.presentation.slides[index];
   if (!slide) return <p className="m-auto text-2xl text-haze">There are no questions to show.</p>;
   const results = state.results[slide.id];
@@ -289,13 +300,14 @@ function ResultsView({ state, index }: { state: HostState; index: number }) {
         question={slide.question}
         aside={
           <p className="text-lg text-haze">
-            {results.total} {results.total === 1 ? "answer" : "answers"}
+            {results.total} {slide.type === "qa" ? "question" : "answer"}
+            {results.total === 1 ? "" : "s"}
           </p>
         }
       />
       <div className="mt-6 flex min-h-0 flex-1 gap-8">
         <div className="min-h-0 min-w-0 flex-1">
-          <Results slide={slide} results={results} reveal={quiz} />
+          <Results slide={slide} results={results} reveal={quiz} onAnswered={markAnswered(slide.type, send)} />
         </div>
         {quiz && (
           <div className="hidden w-80 shrink-0 lg:block">
@@ -306,6 +318,10 @@ function ResultsView({ state, index }: { state: HostState; index: number }) {
     </>
   );
 }
+
+/** Q&A slides let the presenter tick off questions as they answer them. */
+const markAnswered = (type: string, send: Send) =>
+  type === "qa" ? (responseId: number, answered: boolean) => send("host:qaAnswered", { responseId, answered }) : undefined;
 
 function QuestionHeading({ label, question, aside }: { label: string; question: string; aside?: ReactNode }) {
   return (
@@ -357,13 +373,14 @@ function LiveQuestion({ state, offset, send }: { state: HostState; offset: numbe
     );
   } else if (quiz && !ended) {
     content = <BigCount value={results.total} label="answers so far" />;
-  } else if (!p.showResults && !(quiz && ended)) {
+  } else if (!p.showResults && !(quiz && ended) && slide.type !== "qa") {
+    // Q&A questions always show: reading them out is the point.
     content = <BigCount value={results.total} label={`${results.total === 1 ? "answer" : "answers"}. Results are hidden until you show them.`} />;
   } else {
     content = (
       <div className="flex h-full gap-8">
         <div className="min-h-0 min-w-0 flex-1">
-          <Results slide={slide} results={results} reveal={quiz && ended} />
+          <Results slide={slide} results={results} reveal={quiz && ended} onAnswered={markAnswered(slide.type, send)} />
         </div>
         {quiz && ended && (
           <div className="hidden w-80 shrink-0 lg:block">

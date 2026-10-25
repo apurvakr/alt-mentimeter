@@ -10,6 +10,8 @@ export const LIMITS = {
   openEnded: 200,
   quizText: 60,
   nickname: 24,
+  qaQuestion: 200,
+  qaPerPerson: 5,
 } as const;
 
 export const SLIDE_TYPES: { type: SlideType; label: string; hint: string }[] = [
@@ -19,6 +21,8 @@ export const SLIDE_TYPES: { type: SlideType; label: string; hint: string }[] = [
   { type: "scales", label: "Scales", hint: "Rate statements on a scale" },
   { type: "quiz_select", label: "Quiz: select answer", hint: "Timed and scored" },
   { type: "quiz_type", label: "Quiz: type answer", hint: "Timed, typed answer" },
+  { type: "ranking", label: "Ranking", hint: "Put options in order" },
+  { type: "qa", label: "Q&A", hint: "Audience asks and upvotes questions" },
 ];
 
 export const slideLabel = (type: SlideType) => SLIDE_TYPES.find((t) => t.type === type)?.label ?? type;
@@ -65,6 +69,10 @@ export function defaultSlide(type: SlideType): Slide {
       };
     case "quiz_type":
       return { id, type, question: "", options: [], settings: { acceptedAnswers: [""], timeLimit: 30 } };
+    case "ranking":
+      return { id, type, question: "", options: ["Item 1", "Item 2", "Item 3"], settings: {} };
+    case "qa":
+      return { id, type, question: "What would you like to ask?", options: [], settings: {} };
   }
 }
 
@@ -87,7 +95,7 @@ export function sanitizeSlide(input: unknown): Slide | null {
 
   const id = typeof s.id === "string" && /^[a-f0-9]{32}$/.test(s.id) ? s.id : uid();
   const raw = (s.settings && typeof s.settings === "object" ? s.settings : {}) as Record<string, unknown>;
-  const hasOptions = type === "multiple_choice" || type === "quiz_select" || type === "scales";
+  const hasOptions = type === "multiple_choice" || type === "quiz_select" || type === "scales" || type === "ranking";
   const options = hasOptions
     ? (Array.isArray(s.options) ? s.options : []).slice(0, LIMITS.maxOptions).map((o) => sanitizeText(o, LIMITS.option))
     : [];

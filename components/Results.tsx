@@ -4,6 +4,7 @@ import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, XAxis } from "rech
 import { optionColor, optionLabel, optionLetter } from "@/lib/palette";
 import { normalize } from "@/lib/slides";
 import type { LeaderboardEntry, Results as ResultsData, Slide } from "@/lib/types";
+import { Button } from "./ui";
 import { WordCloud } from "./WordCloud";
 
 const LINE = "#2c3e68";
@@ -35,8 +36,18 @@ function OptionTick({ x = 0, y = 0, payload }: { x?: number; y?: number; payload
   );
 }
 
-/** Live results for one slide, styled for the dark presenter screen. `reveal` shows quiz answers. */
-export function Results({ slide, results, reveal = false }: { slide: Slide; results: ResultsData; reveal?: boolean }) {
+/** Live results for one slide, styled for the dark presenter screen. `reveal` shows quiz answers; `onAnswered` lets the presenter tick off Q&A questions. */
+export function Results({
+  slide,
+  results,
+  reveal = false,
+  onAnswered,
+}: {
+  slide: Slide;
+  results: ResultsData;
+  reveal?: boolean;
+  onAnswered?: (questionId: number, answered: boolean) => void;
+}) {
   switch (results.kind) {
     case "choices": {
       const data = slide.options.map((o, i) => ({ label: `${optionLetter(i)}  ${optionLabel(o, i)}`, count: results.counts[i] ?? 0 }));
@@ -104,6 +115,65 @@ export function Results({ slide, results, reveal = false }: { slide: Slide; resu
       );
     }
 
+    case "ranking": {
+      if (!results.total) return <Waiting />;
+      const n = slide.options.length;
+      const ranked = slide.options
+        .map((o, i) => ({ i, label: optionLabel(o, i), avg: results.averages[i] }))
+        .sort((a, b) => (a.avg ?? Infinity) - (b.avg ?? Infinity));
+      return (
+        <ol className="flex h-full flex-col justify-center gap-5 overflow-y-auto pr-1">
+          {ranked.map((r, position) => {
+            // Ranked first by everyone fills the bar; ranked last by everyone leaves it empty.
+            const pct = r.avg == null || n < 2 ? 0 : ((n - r.avg) / (n - 1)) * 100;
+            return (
+              <li key={r.i} className="grid grid-cols-[3.5rem_1fr_auto] items-center gap-5">
+                <span
+                  className={`grid size-14 place-items-center rounded-2xl font-display text-2xl font-extrabold ${
+                    position === 0 ? "bg-marigold text-night" : "bg-night-raised text-white"
+                  }`}
+                >
+                  {position + 1}
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-2xl text-white">{r.label}</p>
+                  <div className="mt-2 h-3 rounded-full bg-night-line">
+                    <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${Math.max(pct, 2)}%`, background: optionColor(r.i) }} />
+                  </div>
+                </div>
+                <p className="w-32 text-right text-base text-haze">
+                  average place{" "}
+                  <strong className="block font-display text-2xl font-bold tabular-nums text-white">{r.avg == null ? "–" : r.avg.toFixed(1)}</strong>
+                </p>
+              </li>
+            );
+          })}
+        </ol>
+      );
+    }
+
+    case "qa":
+      if (!results.questions.length) return <Waiting>No questions yet</Waiting>;
+      return (
+        <ol className="flex h-full flex-col gap-3 overflow-y-auto pr-1">
+          {results.questions.map((q) => (
+            <li key={q.id} className={`flex items-center gap-5 rounded-2xl p-5 ${q.answered ? "bg-night-raised/40" : "bg-night-raised"}`}>
+              <div className="w-16 shrink-0 text-center">
+                <p className={`font-display text-3xl font-extrabold tabular-nums ${q.answered ? "text-haze" : "text-marigold"}`}>{q.votes}</p>
+                <p className="text-sm text-haze">{q.votes === 1 ? "upvote" : "upvotes"}</p>
+              </div>
+              <p className={`min-w-0 flex-1 break-words text-2xl leading-snug ${q.answered ? "text-haze" : "text-white"}`}>{q.text}</p>
+              {q.answered && <span className="shrink-0 rounded-full bg-teal/20 px-3 py-1 text-sm font-bold text-[#7fe0d8]">Answered</span>}
+              {onAnswered && (
+                <Button variant="onNight" className="shrink-0" onClick={() => onAnswered(q.id, !q.answered)}>
+                  {q.answered ? "Undo" : "Mark answered"}
+                </Button>
+              )}
+            </li>
+          ))}
+        </ol>
+      );
+
     case "quizText": {
       const accepted = new Set((slide.settings.acceptedAnswers ?? []).filter(Boolean).map(normalize));
       return (
@@ -138,8 +208,8 @@ export function Results({ slide, results, reveal = false }: { slide: Slide; resu
   }
 }
 
-function Waiting() {
-  return <div className="flex h-full items-center justify-center text-2xl text-haze">No answers yet</div>;
+function Waiting({ children = "No answers yet" }: { children?: string }) {
+  return <div className="flex h-full items-center justify-center text-2xl text-haze">{children}</div>;
 }
 
 export function Leaderboard({ entries }: { entries: LeaderboardEntry[] }) {

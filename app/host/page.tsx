@@ -5,7 +5,15 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { PacingChoice } from "@/components/PacingChoice";
 import { Button, ErrorText, Input, Label, Logo, StatusPill } from "@/components/ui";
-import { type SavedPresentation, call, errorMessage, forgetPresentation, savePresentation, savedPresentations } from "@/lib/client";
+import {
+  type SavedPresentation,
+  call,
+  downloadResults,
+  errorMessage,
+  forgetPresentation,
+  savePresentation,
+  savedPresentations,
+} from "@/lib/client";
 import { LIMITS, formatCode } from "@/lib/slides";
 import type { Pacing, PresentationSummary } from "@/lib/types";
 
@@ -108,6 +116,7 @@ export default function HostDashboard() {
 
 function PresentationRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
   const s = row.summary;
+  const [error, setError] = useState("");
   if (s?.missing) {
     return (
       <li className="flex flex-wrap items-center gap-4 px-5 py-4">
@@ -137,8 +146,20 @@ function PresentationRow({ row, onRemove }: { row: Row; onRemove: () => void }) 
             </>
           )}
         </p>
+        <ErrorText>{error}</ErrorText>
       </div>
       <div className="flex items-center gap-2">
+        {s && s.started > 0 && (
+          <button
+            onClick={() => {
+              setError("");
+              downloadResults(row.id, row.token).catch((e) => setError(errorMessage(e)));
+            }}
+            className="rounded-full px-4 py-2 text-sm font-bold ring-1 ring-line hover:ring-night/40"
+          >
+            Download CSV
+          </button>
+        )}
         <Link href={`/edit/${row.id}`} className="rounded-full px-4 py-2 text-sm font-bold ring-1 ring-line hover:ring-night/40">
           Edit
         </Link>

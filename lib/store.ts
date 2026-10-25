@@ -28,7 +28,14 @@ export interface ResponseRow {
   voter_id: string;
   value: string;
   score: number;
+  /** Q&A: marked answered by the presenter (0 or 1) */
+  answered: number;
+  /** Q&A: upvotes */
+  votes: number;
 }
+
+const responseColumns =
+  "id, voter_id, value, score, answered, (SELECT COUNT(*) FROM qa_votes v WHERE v.response_id = responses.id) AS votes";
 
 export interface StoredPresentation extends Presentation {
   token: string;
@@ -146,12 +153,12 @@ export function startQuiz(slideId: string, now: number) {
 }
 
 export function responsesFor(slideId: string) {
-  return db.prepare("SELECT id, voter_id, value, score FROM responses WHERE slide_id = ? ORDER BY id").all(slideId) as unknown as ResponseRow[];
+  return db.prepare(`SELECT ${responseColumns} FROM responses WHERE slide_id = ? ORDER BY id`).all(slideId) as unknown as ResponseRow[];
 }
 
 export function responsesByVoter(slideId: string, voterId: string) {
   return db
-    .prepare("SELECT id, voter_id, value, score FROM responses WHERE slide_id = ? AND voter_id = ? ORDER BY id")
+    .prepare(`SELECT ${responseColumns} FROM responses WHERE slide_id = ? AND voter_id = ? ORDER BY id`)
     .all(slideId, voterId) as unknown as ResponseRow[];
 }
 
@@ -193,19 +200,79 @@ export function respondentsBySlide(presentationId: string) {
   return Object.fromEntries(rows.map((r) => [r.slideId, r.people]));
 }
 
-/** People who answered at least one question, and those who answered all `slideCount` of them. */
-export function progress(presentationId: string, slideCount: number) {
+/** People who answered at least one question, and those who answered all of them. Asking in a Q&A is optional, so Q&A slides don't count towards finishing. */
+export function progress(presentationId: string) {
   return db
     .prepare(
-      `SELECT COUNT(*) AS started, COALESCE(SUM(CASE WHEN answered >= ? THEN 1 ELSE 0 END), 0) AS completed
+      `SELECT COUNT(*) AS started, COALESCE(SUM(CASE WHEN answered >= (
+         SELECT COUNT(*) FROM slides WHERE presentation_id = ? AND type != 'qa'
+       ) THEN 1 ELSE 0 END), 0) AS completed
        FROM (
-         SELECT r.voter_id, COUNT(DISTINCT r.slide_id) AS answered
+         SELECT r.voter_id, COUNT(DISTINCT CASE WHEN s.type != 'qa' THEN r.slide_id END) AS answered
          FROM responses r JOIN slides s ON s.id = r.slide_id
          WHERE s.presentation_id = ?
          GROUP BY r.voter_id
        )`,
     )
-    .get(slideCount, presentationId) as unknown as { started: number; completed: number };
+    .get(presentationId, presentationId) as unknown as { started: number; completed: number };
+}
+
+/** Every response in a presentation, oldest first, for exporting. */
+export function allResponses(presentationId: string) {
+  return db
+    .prepare(
+      `SELECT r.slide_id AS slideId, r.voter_id AS voterId, r.value AS value, r.score AS score
+       FROM responses r JOIN slides s ON s.id = r.slide_id
+       WHERE s.presentation_id = ?
+       ORDER BY r.id`,
+    )
+    .all(presentationId) as unknown as { slideId: string; voterId: string; value: string; score: number }[];
+}
+
+export function voterNames(presentationId: string) {
+  const rows = db.prepare("SELECT voter_id, name FROM voters WHERE presentation_id = ?").all(presentationId) as unknown as {
+    voter_id: string;
+    name: string;
+  }[];
+  return new Map(rows.map((r) => [r.voter_id, r.name]));
+}
+
+/** The slide a response belongs to and who sent it. */
+export function responseInfo(responseId: number) {
+  const row = db.prepare("SELECT id, slide_id, voter_id FROM responses WHERE id = ?").get(responseId) as
+    | { id: number; slide_id: string; voter_id: string }
+    | undefined;
+  return row ? { id: row.id, slideId: row.slide_id, voterId: row.voter_id } : null;
+}
+
+/** Adds this participant's upvote to a Q&A question, or takes it back. */
+export function toggleUpvote(responseId: number, voterId: string) {
+  const removed = db.prepare("DELETE FROM qa_votes WHERE response_id = ? AND voter_id = ?").run(responseId, voterId);
+  if (!removed.changes) db.prepare("INSERT INTO qa_votes (response_id, voter_id) VALUES (?, ?)").run(responseId, voterId);
+}
+
+export function setAnswered(responseId: number, answered: boolean) {
+  db.prepare("UPDATE responses SET answered = ? WHERE id = ?").run(answered ? 1 : 0, responseId);
+}
+
+/** A Q&A slide's questions as one participant sees them. */
+export function qaQuestions(slideId: string, voterId: string) {
+  const rows = db
+    .prepare(
+      `SELECT id, value, answered, voter_id = ? AS mine,
+         (SELECT COUNT(*) FROM qa_votes v WHERE v.response_id = responses.id) AS votes,
+         EXISTS (SELECT 1 FROM qa_votes v WHERE v.response_id = responses.id AND v.voter_id = ?) AS voted
+       FROM responses WHERE slide_id = ?`,
+    )
+    .all(voterId, voterId, slideId) as unknown as { id: number; value: string; answered: number; mine: number; votes: number; voted: number }[];
+  return rows.map((r) => ({
+    id: r.id,
+    text: String((JSON.parse(r.value) as { text?: unknown }).text ?? ""),
+    votes: r.votes,
+    answered: r.answered === 1,
+    mine: r.mine === 1,
+    voted: r.voted === 1,
+  }));
 }
 
 export function voterName(presentationId: string, voterId: string) {

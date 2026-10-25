@@ -2,7 +2,8 @@ import { createServer } from "node:http";
 import os from "node:os";
 import next from "next";
 import { Server, type Socket } from "socket.io";
-import { aggregate, evaluate, publicSlide, quizWindow } from "./lib/logic";
+import { resultsCsv, resultsFilename } from "./lib/export";
+import { aggregate, byQaOrder, evaluate, publicSlide, quizWindow } from "./lib/logic";
 import { LIMITS, defaultSlide, isQuiz, sanitizeSlide, sanitizeText } from "./lib/slides";
 import * as store from "./lib/store";
 import type {
@@ -67,7 +68,7 @@ function hostState(p: store.StoredPresentation): HostState {
     quiz,
     leaderboard: store.leaderboard(p.id),
     participants: io.sockets.adapter.rooms.get(audienceRoom(p.id))?.size ?? 0,
-    progress: store.progress(p.id, p.slides.length),
+    progress: store.progress(p.id),
     respondents: store.respondentsBySlide(p.id),
     joinUrl: `${publicUrl}/vote/${p.code}`,
     joinHost,
@@ -91,6 +92,7 @@ function audienceState(p: store.StoredPresentation, voterId: string): AudienceSt
     mine: {},
     quiz: {},
     quizResults: {},
+    qa: {},
     name: store.voterName(p.id, voterId),
     serverNow: Date.now(),
   };
@@ -102,6 +104,7 @@ function audienceState(p: store.StoredPresentation, voterId: string): AudienceSt
   for (const slide of visible) {
     const mine = answered.get(slide.id);
     state.mine[slide.id] = mine?.count ?? 0;
+    if (slide.type === "qa") state.qa[slide.id] = store.qaQuestions(slide.id, voterId).sort(byQaOrder).slice(0, 100);
     if (!isQuiz(slide.type)) continue;
     // Self-paced quizzes show the outcome straight away; timed ones once the timer ends.
     if (p.pacing === "self") {
@@ -142,6 +145,19 @@ function pushAudience(id: string) {
   }
 }
 
+// Q&A questions and upvotes go to every phone, so those pushes are batched too.
+const audienceTimers = new Map<string, NodeJS.Timeout>();
+function pushAudienceSoon(id: string) {
+  if (audienceTimers.has(id)) return;
+  audienceTimers.set(
+    id,
+    setTimeout(() => {
+      audienceTimers.delete(id);
+      pushAudience(id);
+    }, 150),
+  );
+}
+
 function refresh(id: string) {
   pushHost(id);
   pushAudience(id);
@@ -172,6 +188,22 @@ const asPacing = (value: unknown): Pacing | undefined => (value === "self" || va
 const asStatus = (value: unknown): SessionStatus | undefined =>
   value === "draft" || value === "open" || value === "closed" ? value : undefined;
 
+/** The presentation this participant joined, if it's taking answers. */
+function participant(socket: Socket) {
+  const { presentationId, voterId } = socket.data as { presentationId?: string; voterId?: string };
+  const p = presentationId && voterId ? store.getPresentation(presentationId) : null;
+  if (!p || !voterId) throw new Error("Join a presentation first");
+  if (p.status !== "open") throw new Error(p.status === "closed" ? "This session has ended" : "This session hasn't started yet");
+  return { p, voterId };
+}
+
+/** A slide participants can answer right now: any slide when self-paced, otherwise the current one. */
+function openSlide(p: store.StoredPresentation, slideId: unknown) {
+  const slide = p.pacing === "self" ? p.slides.find((s) => s.id === slideId) : currentSlide(p);
+  if (!slide || slide.id !== slideId) throw new Error("That question is no longer open");
+  return slide;
+}
+
 function findSlide(p: store.StoredPresentation, slideId: unknown) {
   const slide = p.slides.find((s) => s.id === slideId);
   if (!slide) throw new Error("Slide not found");
@@ -200,7 +232,7 @@ io.on("connection", (socket) => {
         status: p.status,
         pacing: p.pacing,
         slides: p.slides.length,
-        started: store.progress(p.id, p.slides.length).started,
+        started: store.progress(p.id).started,
       };
     }),
   );
@@ -261,6 +293,21 @@ io.on("connection", (socket) => {
     refresh(p.id);
   });
 
+  on(socket, "host:qaAnswered", (payload) => {
+    const p = authorize(payload);
+    const question = store.responseInfo(Number(payload.responseId));
+    const slide = question && p.slides.find((s) => s.id === question.slideId);
+    if (!question || slide?.type !== "qa") throw new Error("Question not found");
+    store.setAnswered(question.id, payload.answered === true);
+    pushHost(p.id);
+    pushAudienceSoon(p.id);
+  });
+
+  on(socket, "host:export", (payload) => {
+    const p = authorize(payload);
+    return { filename: resultsFilename(p.title), csv: resultsCsv(p) };
+  });
+
   on(socket, "audience:join", ({ code, voterId }) => {
     const p = store.getPresentationByCode(String(code).replace(/\D/g, ""));
     if (!p) throw new Error("No presentation uses that code");
@@ -273,12 +320,8 @@ io.on("connection", (socket) => {
   });
 
   on(socket, "audience:respond", ({ slideId, value, name }) => {
-    const { presentationId, voterId } = socket.data as { presentationId?: string; voterId?: string };
-    const p = presentationId && voterId ? store.getPresentation(presentationId) : null;
-    if (!p || !voterId) throw new Error("Join a presentation first");
-    if (p.status !== "open") throw new Error(p.status === "closed" ? "This session has ended" : "This session hasn't started yet");
-    const slide = p.pacing === "self" ? p.slides.find((s) => s.id === slideId) : currentSlide(p);
-    if (!slide || slide.id !== slideId) throw new Error("That question is no longer open");
+    const { p, voterId } = participant(socket);
+    const slide = openSlide(p, slideId);
 
     if (isQuiz(slide.type)) {
       const nickname = sanitizeText(name, LIMITS.nickname) || store.voterName(p.id, voterId);
@@ -295,6 +338,21 @@ io.on("connection", (socket) => {
     if ("error" in result) throw new Error(result.error);
     store.addResponse(slide.id, voterId, result.value, result.score, result.replace);
     pushHost(p.id);
+    // Everyone sees everyone's Q&A questions.
+    if (slide.type === "qa") pushAudienceSoon(p.id);
+    return audienceState(p, voterId);
+  });
+
+  on(socket, "audience:upvote", ({ responseId }) => {
+    const { p, voterId } = participant(socket);
+    const question = store.responseInfo(Number(responseId));
+    if (!question) throw new Error("That question was removed");
+    const slide = openSlide(p, question.slideId);
+    if (slide.type !== "qa") throw new Error("Only Q&A questions can be upvoted");
+    if (question.voterId === voterId) throw new Error("You can't upvote your own question");
+    store.toggleUpvote(question.id, voterId);
+    pushHost(p.id);
+    pushAudienceSoon(p.id);
     return audienceState(p, voterId);
   });
 

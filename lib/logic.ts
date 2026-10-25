@@ -1,6 +1,6 @@
 import { DEFAULT_TIME_LIMIT, LIMITS, defaultMaxEntries, normalize } from "./slides";
 import type { ResponseRow } from "./store";
-import type { PublicSlide, QuizWindow, Results, Slide } from "./types";
+import type { PublicSlide, QaQuestion, QuizWindow, Results, Slide } from "./types";
 
 /** Answers arriving this soon after the timer ends still count, to absorb network lag. */
 const GRACE_MS = 1000;
@@ -56,6 +56,20 @@ export function evaluate(
       return { value: { ratings }, score: 0, replace: true };
     }
 
+    case "ranking": {
+      const n = slide.options.length;
+      const order = v.order;
+      const valid = Array.isArray(order) && order.length === n && new Set(order).size === n && order.every((i) => isIndex(i, n));
+      if (!valid) return { error: "Put every item in order" };
+      return { value: { order }, score: 0, replace: true };
+    }
+
+    case "qa":
+      if (!text) return { error: "Type your question first" };
+      if (text.length > LIMITS.qaQuestion) return { error: `Keep it to ${LIMITS.qaQuestion} characters` };
+      if (ctx.mine.length >= LIMITS.qaPerPerson) return { error: `You can ask up to ${LIMITS.qaPerPerson} questions` };
+      return { value: { text }, score: 0, replace: false };
+
     case "quiz_select":
     case "quiz_type": {
       const { window, now, selfPaced } = ctx;
@@ -85,6 +99,9 @@ export function evaluate(
     }
   }
 }
+
+/** Q&A order: unanswered first, then most upvoted, then newest. */
+export const byQaOrder = (a: QaQuestion, b: QaQuestion) => Number(a.answered) - Number(b.answered) || b.votes - a.votes || b.id - a.id;
 
 function tally(texts: string[], limit: number) {
   const counts = new Map<string, { text: string; count: number }>();
@@ -126,6 +143,28 @@ export function aggregate(slide: Slide, rows: ResponseRow[]): Results {
       }
       return { kind: "scales", averages: sums.map((s) => (n ? s / n : null)), total: n };
     }
+    case "ranking": {
+      const n = slide.options.length;
+      const sums = slide.options.map(() => 0);
+      let count = 0;
+      for (const v of values) {
+        if (!Array.isArray(v.order) || v.order.length !== n) continue;
+        v.order.forEach((option, position) => {
+          if (isIndex(option, n)) sums[option] += position + 1;
+        });
+        count++;
+      }
+      return { kind: "ranking", averages: sums.map((s) => (count ? s / count : null)), total: count };
+    }
+    case "qa":
+      return {
+        kind: "qa",
+        questions: rows
+          .map((r, i) => ({ id: r.id, text: texts[i], votes: r.votes, answered: r.answered === 1 }))
+          .sort(byQaOrder)
+          .slice(0, 100),
+        total: rows.length,
+      };
     case "quiz_type":
       return {
         kind: "quizText",
