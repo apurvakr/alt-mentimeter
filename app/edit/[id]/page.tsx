@@ -122,6 +122,10 @@ export default function EditPage() {
           Present
         </Link>
       </header>
+      <p className="border-b border-slate-200 bg-white px-4 pb-3 text-sm text-slate-600 sm:px-6">
+        To run it, click <strong>Present</strong> and show that screen to your audience. You move between questions there with{" "}
+        <strong>Next →</strong> or the arrow keys; everyone&apos;s phone follows automatically.
+      </p>
 
       <div className="flex flex-1 flex-col md:flex-row">
         <aside className="border-b border-slate-200 bg-white p-3 md:w-72 md:border-b-0 md:border-r">

@@ -92,6 +92,8 @@ interface ViewProps {
   state: AudienceState;
   offset: number;
   onState: (s: AudienceState) => void;
+  /** Shown once they've answered, so they know what happens next. */
+  hint: string;
 }
 
 /** Sends a response and returns an error message, or "" on success. */
@@ -114,8 +116,13 @@ function useSubmit(slide: PublicSlide, onState: (s: AudienceState) => void) {
   return { submit, busy, error };
 }
 
-function SlideView(props: ViewProps) {
-  const { slide } = props;
+function SlideView(viewProps: Omit<ViewProps, "hint">) {
+  const { slide, state } = viewProps;
+  const hint =
+    state.index < state.total - 1
+      ? "Waiting for the presenter to move on to the next question…"
+      : "That was the last question. Thanks for taking part!";
+  const props = { ...viewProps, hint };
   return (
     <section className="flex flex-1 flex-col gap-6">
       <h1 className="text-2xl font-bold leading-snug">{slide.question || "Untitled question"}</h1>
@@ -127,16 +134,28 @@ function SlideView(props: ViewProps) {
   );
 }
 
-function Thanks({ children, onChange }: { children: ReactNode; onChange?: () => void }) {
+function Thanks({ children, onChange, hint }: { children: ReactNode; onChange?: () => void; hint?: string }) {
   return (
-    <div className="rounded-2xl bg-green-50 p-6 text-center ring-1 ring-green-200">
-      <p className="text-lg font-semibold text-green-900">{children}</p>
-      {onChange && (
-        <button className="mt-3 text-sm font-semibold text-green-800 underline" onClick={onChange}>
-          Change my answer
-        </button>
-      )}
-    </div>
+    <>
+      <div className="rounded-2xl bg-green-50 p-6 text-center ring-1 ring-green-200">
+        <p className="text-lg font-semibold text-green-900">{children}</p>
+        {onChange && (
+          <button className="mt-3 text-sm font-semibold text-green-800 underline" onClick={onChange}>
+            Change my answer
+          </button>
+        )}
+      </div>
+      <Hint>{hint}</Hint>
+    </>
+  );
+}
+
+function Hint({ children }: { children?: string }) {
+  if (!children) return null;
+  return (
+    <p className="text-center text-sm text-slate-500" aria-live="polite">
+      {children}
+    </p>
   );
 }
 
@@ -161,12 +180,18 @@ function OptionButtons({ options, selected, onSelect, disabled }: { options: str
   );
 }
 
-function ChoiceVote({ slide, state, onState }: ViewProps) {
+function ChoiceVote({ slide, state, onState, hint }: ViewProps) {
   const [selected, setSelected] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const { submit, busy, error } = useSubmit(slide, onState);
 
-  if (state.mine > 0 && !editing) return <Thanks onChange={() => setEditing(true)}>Your vote is in. Watch the screen!</Thanks>;
+  if (state.mine > 0 && !editing) {
+    return (
+      <Thanks onChange={() => setEditing(true)} hint={hint}>
+        Your vote is in. Watch the screen!
+      </Thanks>
+    );
+  }
 
   return (
     <>
@@ -179,14 +204,14 @@ function ChoiceVote({ slide, state, onState }: ViewProps) {
   );
 }
 
-function TextVote({ slide, state, onState }: ViewProps) {
+function TextVote({ slide, state, onState, hint }: ViewProps) {
   const [text, setText] = useState("");
   const { submit, busy, error } = useSubmit(slide, onState);
   const max = slide.settings.maxEntries ?? defaultMaxEntries(slide.type);
   const limit = slide.type === "word_cloud" ? LIMITS.wordCloud : LIMITS.openEnded;
   const left = max - state.mine;
 
-  if (left <= 0) return <Thanks>Thanks! Your {max === 1 ? "answer is" : "answers are"} on the screen.</Thanks>;
+  if (left <= 0) return <Thanks hint={hint}>Thanks! Your {max === 1 ? "answer is" : "answers are"} on the screen.</Thanks>;
 
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -221,13 +246,19 @@ function TextVote({ slide, state, onState }: ViewProps) {
   );
 }
 
-function ScalesVote({ slide, state, onState }: ViewProps) {
+function ScalesVote({ slide, state, onState, hint }: ViewProps) {
   const max = slide.settings.scaleMax ?? 5;
   const [ratings, setRatings] = useState(() => slide.options.map(() => Math.ceil(max / 2)));
   const [editing, setEditing] = useState(false);
   const { submit, busy, error } = useSubmit(slide, onState);
 
-  if (state.mine > 0 && !editing) return <Thanks onChange={() => setEditing(true)}>Thanks for rating!</Thanks>;
+  if (state.mine > 0 && !editing) {
+    return (
+      <Thanks onChange={() => setEditing(true)} hint={hint}>
+        Thanks for rating!
+      </Thanks>
+    );
+  }
 
   return (
     <>
@@ -260,7 +291,7 @@ function ScalesVote({ slide, state, onState }: ViewProps) {
   );
 }
 
-function QuizVote({ slide, state, offset, onState }: ViewProps) {
+function QuizVote({ slide, state, offset, onState, hint }: ViewProps) {
   const [name, setName] = useState(() => state.name ?? savedNickname());
   const [confirmedName, setConfirmedName] = useState(Boolean(state.name));
   const [text, setText] = useState("");
@@ -291,9 +322,12 @@ function QuizVote({ slide, state, offset, onState }: ViewProps) {
 
   if (state.quizResult) {
     return state.quizResult.correct ? (
-      <Thanks>Correct! +{state.quizResult.points} points</Thanks>
+      <Thanks hint={hint}>Correct! +{state.quizResult.points} points</Thanks>
     ) : (
-      <div className="rounded-2xl bg-red-50 p-6 text-center text-lg font-semibold text-red-900 ring-1 ring-red-200">Not this time. Next one!</div>
+      <>
+        <div className="rounded-2xl bg-red-50 p-6 text-center text-lg font-semibold text-red-900 ring-1 ring-red-200">Not this time. Next one!</div>
+        <Hint>{hint}</Hint>
+      </>
     );
   }
 
